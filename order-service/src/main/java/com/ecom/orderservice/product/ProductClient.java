@@ -26,9 +26,10 @@ public class ProductClient {
     private final RestTemplate restTemplate;
 
 
-    public List<PurchaseResponse> purchaseProducts( List<com.ecom.orderservice.dto.PurchaseRequest> requestBody) {
+    public List<PurchaseResponse> purchaseProducts( List<com.ecom.orderservice.dto.PurchaseRequest> requestBody,String jwtToken) {
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+        headers.setBearerAuth(jwtToken.replace("Bearer ", "")); //  add token here
 
         HttpEntity<List<PurchaseRequest>> requestEntity = new HttpEntity<>(requestBody, headers);
         ParameterizedTypeReference<List<PurchaseResponse>> responseType = new ParameterizedTypeReference<>() {

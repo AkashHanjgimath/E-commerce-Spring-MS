@@ -35,11 +35,11 @@ public class Orderservice {
 
 
     @Transactional
-    public Integer createOrder(OrderRequest request) {
+    public Integer createOrder(OrderRequest request,String jwtToken) {
         var customer = this.customerClient.findCustomerById(request.customerId())
                 .orElseThrow(() -> new BusinessException("Cannot create order :: No Customer exists with provided ID"));
 
-        var purchaseProducts = productClient.purchaseProducts(request.products());
+        var purchaseProducts = productClient.purchaseProducts(request.products(),jwtToken);
 
         var order = orderRepository.save(mapper.toOrder(request));
 

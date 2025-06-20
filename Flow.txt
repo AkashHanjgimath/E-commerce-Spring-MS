@@ -1,0 +1,344 @@
+
+
+## ✅ Auth-Service: Handles authentication and JWT token generation
+
+### 1. `AuthController.java`
+
+* **`login()`**
+
+  * Accepts username and password via `/api/v1/auth/login`.
+  * Authenticates the user using `AuthenticationManager`.
+  * If authentication is successful, generates a JWT token using `JwtService`.
+  * Returns the token to the client.
+* **`register()`**
+
+  * Accepts user registration data (username, password, roles).
+  * Encodes the password using `PasswordEncoder`.
+  * Saves the user in the database via `UserRepository`.
+
+---
+
+### 2. `JwtService.java`
+
+* **`generateToken(UserDetails)`**
+
+  * Builds a JWT token with subject (username), issue time, and expiration.
+* **`extractUsername(token)`**
+
+  * Extracts the username (subject) from the token.
+* **`isTokenValid(token, userDetails)`**
+
+  * Verifies that the token is valid and belongs to the specified user.
+
+---
+
+### 3. `CustomUserDetailsService.java`
+
+* Implements `UserDetailsService`.
+* **`loadUserByUsername()`**
+
+  * Loads the user from the database using `UserRepository`.
+  * Converts the `User` entity to a `UserDetails` object (used by Spring Security).
+
+---
+
+### 4. `SecurityConfig.java`
+
+* Configures Spring Security:
+
+  * Disables CSRF.
+  * Allows `/api/v1/auth/**` endpoints without authentication.
+  * Protects all other endpoints.
+  * Adds `JwtAuthenticationFilter` in the filter chain.
+
+---
+
+### 5. `JwtAuthenticationFilter.java`
+
+* **`doFilterInternal()`**
+
+  * Checks for a JWT token in the `Authorization` header.
+  * Validates the token using `JwtService`.
+  * If valid, sets the `SecurityContext` with authenticated user.
+
+---
+
+### 6. `User.java`
+
+* Entity class mapped to the `users` table.
+* Stores `id`, `username`, `password`, and `roles`.
+
+---
+
+### 7. `UserRepository.java`
+
+* Extends `JpaRepository<User, Long>`.
+* Provides DB operations like `findByUsername`.
+
+---
+
+### 8. `application.yml` (Important Keys)
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/authdb
+    username: postgres
+    password: postgres
+  jpa:
+    hibernate:
+      ddl-auto: update
+  sql:
+    init:
+      mode: always
+      data-locations: classpath:data.sql
+```
+
+---
+
+## ✅ API-Gateway: Routes requests and validates JWT for downstream services
+
+### 1. `ApiGatewayApplication.java`
+
+* Main entry point of the application.
+
+---
+
+### 2. `GatewayJwtUtil.java`
+
+* Handles JWT parsing and validation.
+* **`validateToken(token)`**
+
+  * Returns true if token is valid and signature is correct.
+* **`extractUsername(token)`**
+
+  * Gets the username (subject) from the JWT claims.
+
+---
+
+### 3. `JwtAuthenticationGatewayFilterFactory.java`
+
+* Custom Gateway Filter.
+* **`apply()`**
+
+  * Checks if request path starts with `/api/v1/auth` (public) → skip check.
+  * For others:
+
+    * Extracts token from `Authorization` header.
+    * Validates token using `GatewayJwtUtil`.
+    * If valid, adds `"X-auth-user"` header for downstream services.
+
+---
+
+### 4. `SecurityConfig.java`
+
+* Uses `WebFluxSecurity`.
+* Disables CSRF.
+* Allows `/api/v1/auth/**`.
+* Requires authentication for all other paths.
+
+---
+
+### 5. `application.yml` (Gateway Routing)
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      discovery.locator.enabled: true
+      routes:
+        - id: product-service
+          uri: lb://PRODUCT-SERVICE
+          predicates:
+            - Path=/api/v1/products/**
+          filters:
+            - name: JwtAuthentication
+        - id: auth-service
+          uri: lb://AUTH-SERVICE
+          predicates:
+            - Path=/api/v1/auth/**
+          filters: []
+```
+
+* Defines routes and attaches the JWT filter only where needed.
+* `/auth/**` is public; others are protected.
+
+---
+
+## ✅ How the Flow Works
+
+### 🔐 Login Flow
+
+1. Client sends `POST /api/v1/auth/login` with username and password.
+2. `AuthController.login()` authenticates and returns a JWT token.
+
+### 🔁 Subsequent Request Flow (e.g. `/api/v1/products`)
+
+1. Client calls `/api/v1/products` with `Authorization: Bearer <token>`.
+2. API Gateway intercepts the request:
+
+   * Validates token in `JwtAuthenticationGatewayFilterFactory`.
+   * Adds `X-auth-user` to the request.
+3. Request is forwarded to the correct microservice (`PRODUCT-SERVICE`).
+4. Product service processes the request.
+
+---
+
+Great! I'll now provide you with:
+
+1. ✅ A detailed explanation of the complete flow of the `order-service` microservice.
+2. ✅ How to propagate JWT tokens using Feign and RestTemplate calls.
+
+I'll format it so you can easily copy it into Notepad.
+
+---
+
+### ✅ ORDER-SERVICE FLOW EXPLANATION
+
+#### ➤ `OrderController`
+
+```java
+@PostMapping
+public ResponseEntity<Integer> createOrder(@RequestBody @Valid OrderRequest request)
+```
+
+* Accepts an HTTP POST request with order data (customer ID, products, payment).
+* Calls `orderService.createOrder(...)` to handle the business logic.
+
+---
+
+#### ➤ `Orderservice#createOrder()`
+
+```java
+@Transactional
+public Integer createOrder(OrderRequest request)
+```
+
+**Steps inside this method:**
+
+1. ✅ `customerClient.findCustomerById(request.customerId())`
+   → Uses Feign client to call `CUSTOMER-SERVICE` via gateway and verify the customer exists.
+
+2. ✅ `productClient.purchaseProducts(request.products())`
+   → Calls `PRODUCT-SERVICE` via gateway using RestTemplate to reserve or validate products.
+
+3. ✅ `orderRepository.save(...)`
+   → Persists the order entity into the database.
+
+4. ✅ `orderLineService.saveOrderLine(...)`
+   → Creates a new `OrderLine` for each product in the order.
+
+5. ✅ `paymentClient.requestOrderPayment(...)`
+   → Makes a synchronous payment request via RestTemplate to `PAYMENT-SERVICE`.
+
+6. ✅ `orderProducer.sendOrderConfirmation(...)`
+   → Sends an order confirmation message to Kafka (asynchronously) for downstream processing like email or inventory update.
+
+7. ✅ Returns the order ID after successful processing.
+
+---
+
+#### ➤ `Orderservice#findAllOrders()`
+
+```java
+public List<OrderResponse> findAllOrders()
+```
+
+* Fetches all orders and maps them to DTOs for response.
+
+---
+
+#### ➤ `Orderservice#findById()`
+
+```java
+public OrderResponse findById(Integer orderId)
+```
+
+* Fetches a specific order and maps it to a response DTO. Throws exception if not found.
+
+---
+
+#### ➤ `CustomerClient`
+
+```java
+@FeignClient(name="customer-service", url="${application.config.customer-url}")
+```
+
+* Sends GET requests to `/api/v1/customers/{customerId}` via the gateway.
+
+---
+
+#### ➤ `ProductClient#purchaseProducts(...)`
+
+```java
+public List<PurchaseResponse> purchaseProducts(List<PurchaseRequest> requestBody)
+```
+
+* Calls `/api/v1/products/purchase` using `RestTemplate`.
+* Sends a POST request with product list to reserve/validate them.
+* Requires JWT header (to be added manually, shown below).
+
+---
+
+### ✅ JWT PROPAGATION IN FEIGN CLIENT
+
+#### ✅ Step 1: Intercept outgoing Feign requests
+
+```java
+@Component
+public class FeignClientInterceptor implements RequestInterceptor {
+
+    @Override
+    public void apply(RequestTemplate template) {
+        // Get JWT token from context (SecurityContextHolder or custom)
+        String token = JwtTokenHolder.getToken(); // Custom utility or ThreadLocal
+        if (token != null) {
+            template.header("Authorization", "Bearer " + token);
+        }
+    }
+}
+```
+
+Make sure `FeignClientInterceptor` is a Spring-managed bean.
+
+---
+
+### ✅ JWT PROPAGATION IN RESTTEMPLATE
+
+#### ✅ Step 1: Modify `ProductClient` to accept token
+
+```java
+public List<PurchaseResponse> purchaseProducts(List<PurchaseRequest> requestBody, String token)
+```
+
+#### ✅ Step 2: Set Authorization header
+
+```java
+HttpHeaders headers = new HttpHeaders();
+headers.setContentType(MediaType.APPLICATION_JSON);
+headers.setBearerAuth(token); // ✅ Adds "Authorization: Bearer <token>"
+```
+
+Or use:
+
+```java
+headers.set("Authorization", "Bearer " + token);
+```
+
+---
+
+### ✅ HOW TO PASS JWT TOKEN
+
+When your frontend/user calls `POST /api/v1/orders`, the gateway passes the token.
+
+You must extract it inside `Orderservice` using:
+
+```java
+String token = RequestContextHolder.currentRequestAttributes()
+                .getAttribute("Authorization", RequestAttributes.SCOPE_REQUEST);
+```
+
+Or you can create a custom `@Component` to extract and store it per request in a `ThreadLocal`.
+
+---
+

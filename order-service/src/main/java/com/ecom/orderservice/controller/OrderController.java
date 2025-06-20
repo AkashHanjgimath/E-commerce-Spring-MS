@@ -19,9 +19,13 @@ public class OrderController {
 
 
     @PostMapping
-    public ResponseEntity<Integer> createOrder(@RequestBody @Valid OrderRequest request) {
-        return ResponseEntity.ok(orderService.createOrder(request));
+    public ResponseEntity<Integer> createOrder(
+            @RequestBody @Valid OrderRequest request,
+            @RequestHeader("Authorization") String authHeader
+    ) {
+        return ResponseEntity.ok(orderService.createOrder(request, authHeader));
     }
+
 
     @GetMapping
     public ResponseEntity<List<OrderResponse>>findAll()
